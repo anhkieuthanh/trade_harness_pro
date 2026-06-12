@@ -1,8 +1,10 @@
 import asyncio
 import logging
 from trade_harness.core.portfolio import PortfolioCache
+from trade_harness.core.context import ContextHarness
 from trade_harness.connection.binance_ws import BinanceWSClient
 from trade_harness.connection.binance_rest import fetch_book_ticker
+from trade_harness.inference.lm_studio import LMStudioClient
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -24,12 +26,34 @@ async def rest_fallback_loop(cache: PortfolioCache):
             logger.error(f"Error in REST fallback loop: {e}")
             await asyncio.sleep(1.0)
 
+async def llm_inference_loop(cache: PortfolioCache):
+    logger.info("LLM inference loop started.")
+    harness = ContextHarness()
+    client = LMStudioClient()
+    
+    while True:
+        try:
+            # Only generate signal if we have active prices
+            if cache.best_bid > 0 and cache.best_ask > 0:
+                prompt = harness.build_prompt(cache)
+                signal = await client.generate_decision(prompt)
+                logger.info(f"[SIGNAL] Decision generated: {signal['action']} | Confidence: {signal['confidence']} | Reasoning: {signal['reasoning']}")
+            else:
+                logger.info("Awaiting price cache initialization before calling LLM...")
+            await asyncio.sleep(5.0)
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"Error in LLM inference loop: {e}")
+            await asyncio.sleep(5.0)
+
 async def main():
     cache = PortfolioCache()
     client = BinanceWSClient(cache)
     
-    # Run REST fallback task in the background
+    # Run REST fallback and LLM inference tasks in the background
     fallback_task = asyncio.create_task(rest_fallback_loop(cache))
+    inference_task = asyncio.create_task(llm_inference_loop(cache))
     
     try:
         await client.start_listening()
@@ -38,7 +62,8 @@ async def main():
     finally:
         client.stop()
         fallback_task.cancel()
-        await asyncio.gather(fallback_task, return_exceptions=True)
+        inference_task.cancel()
+        await asyncio.gather(fallback_task, inference_task, return_exceptions=True)
         logger.info("Bot stopped.")
 
 if __name__ == "__main__":
