@@ -14,7 +14,7 @@ class LMStudioClient:
         try:
             logger.info("Sending prompt to local LM Studio...")
             response = await self.client.chat.completions.create(
-                model="gemma-2-9b",
+                model="gemma-4-e2b",
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.1,
                 timeout=10.0
